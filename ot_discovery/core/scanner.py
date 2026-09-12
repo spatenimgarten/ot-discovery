@@ -49,7 +49,13 @@ class ScanConfig:
     dcp_timeout: float = 3.0
     tcp_timeout: float = 2.0
     udp_timeout: float = 1.0
-    hostname_timeout: float = 1.5  # reverse-DNS lookup done inline by the ARP scan
+    # reverse-DNS lookup done inline by the ARP scan. A real router/NAS on a
+    # home network (FritzBox et al.) has been observed taking several seconds
+    # to answer a PTR query - 1.5s silently resolved 0 of 9 real hostnames
+    # that all resolved fine given more time. Lookups run concurrently
+    # (HostnameResolver's thread pool), so a longer timeout only matters for
+    # whichever single device is slowest to (not) respond, not the total scan time.
+    hostname_timeout: float = 5.0
 
     # Port lists
     tcp_ports: Optional[list[int]] = None

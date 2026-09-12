@@ -181,7 +181,7 @@ class ARPScanner:
         timeout: float = 2.0,
         retries: int = 1,
         resolve_hostnames: bool = True,
-        hostname_timeout: float = 1.5,
+        hostname_timeout: float = 5.0,
         progress_callback: Optional[Callable[[int, int], Awaitable[None]]] = None,
     ):
         self.interface = interface

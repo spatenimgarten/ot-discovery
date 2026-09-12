@@ -113,19 +113,21 @@ class OTDiscoveryGUI:
 
         ttk.Label(net_frame, text="Network (CIDR):").grid(row=0, column=0, sticky=tk.W)
         self.network_var = tk.StringVar(value="192.168.1.0/24")
-        ttk.Entry(net_frame, textvariable=self.network_var).grid(row=0, column=1, sticky=tk.EW, pady=2)
+        ttk.Entry(net_frame, textvariable=self.network_var, width=28).grid(
+            row=0, column=1, columnspan=2, sticky=tk.EW, pady=2)
 
         # Interface selection (only show if multiple interfaces available)
         interfaces = self._get_available_interfaces()
         self.interface_var = tk.StringVar()
         if len(interfaces) > 1 or (len(interfaces) == 1 and interfaces[0] != "auto-detect"):
             ttk.Label(net_frame, text="Interface:").grid(row=1, column=0, sticky=tk.W)
-            self.interface_combo = ttk.Combobox(net_frame, textvariable=self.interface_var, state="readonly")
+            self.interface_combo = ttk.Combobox(net_frame, textvariable=self.interface_var, state="readonly", width=28)
             self.interface_combo['values'] = interfaces
             if self.interface_combo['values']:
                 self.interface_combo.current(0)
             self.interface_combo.grid(row=1, column=1, sticky=tk.EW, pady=2)
-            ttk.Button(net_frame, text="Refresh", command=self._refresh_interfaces).grid(row=1, column=2, padx=2)
+            ttk.Button(net_frame, text="↻", width=2, command=self._refresh_interfaces).grid(
+                row=1, column=2, padx=(2, 0))
         else:
             # Auto-detect only - no UI needed
             self.interface_combo = None
