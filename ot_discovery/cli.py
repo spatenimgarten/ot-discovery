@@ -9,6 +9,7 @@ from pathlib import Path
 from .core import OTScanner, ScanConfig, ScanMode
 from .logging_config import setup_logging
 from .netutil import parse_network
+from .npcap_util import is_npcap_installed, NPCAP_DOWNLOAD_URL
 from .paths import LOG_DIR
 
 
@@ -75,6 +76,11 @@ async def main() -> int:
         config.tcp_ports = [int(p.strip()) for p in args.tcp_ports.split(",")]
     if args.udp_ports:
         config.udp_ports = [int(p.strip()) for p in args.udp_ports.split(",")]
+
+    if not is_npcap_installed():
+        print(f"Note: Npcap not found - ARP scan will use the slower SendARP fallback "
+              f"and DCP (Profinet) scan will be skipped. Install it from {NPCAP_DOWNLOAD_URL}",
+              file=sys.stderr)
 
     print(f"Starting OT Discovery scan on {network}")
     if args.interface:

@@ -1,8 +1,9 @@
 # Core dependencies
-netifaces>=0.11.0
+netifaces>=0.11.0; sys_platform != "win32"
+netifaces2>=0.0.22; sys_platform == "win32"
 
-# Optional: enables a fast Npcap-based ARP sweep on Windows (falls back to the
-# built-in SendARP API if not installed, or if no Npcap driver is present)
+# Enables the fast Npcap-based ARP/DCP sweep on Windows (falls back to the
+# built-in SendARP API, and skips DCP, if the Npcap driver is not installed)
 scapy>=2.5.0
 
 # For development

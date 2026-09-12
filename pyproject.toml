@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "netifaces2>=0.0.22; sys_platform == 'win32'",
     "netifaces>=0.11.0; sys_platform != 'win32'",
+    "scapy>=2.5.0",
 ]
 
 [project.optional-dependencies]
@@ -33,10 +34,6 @@ dev = [
     "mypy>=1.0.0",
     "pyinstaller>=6.0.0",
 ]
-fast-arp = [
-    "scapy>=2.5.0",  # Windows: enables a fast Npcap broadcast ARP sweep; falls back to SendARP if absent
-]
-
 [project.scripts]
 ot-discovery = "ot_discovery.cli:run"
 ot-discovery-gui = "ot_discovery.gui.main:main"

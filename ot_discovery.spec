@@ -1,12 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import sys
-from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
 # Collect data files. ieee_oui.csv lives in data/ next to the exe and is
 # downloaded on first run if missing, so it does not need to be bundled here.
+# Npcap itself (the kernel driver scapy/DCP need) is not bundled either - it
+# can't be baked into the exe, and the free edition's license disallows
+# redistribution anyway. The app points users at npcap.com if it's missing
+# (see ot_discovery/npcap_util.py), keeping this build small.
 datas = []
 
 # Hidden imports for asyncio and network modules
@@ -46,7 +49,9 @@ hiddenimports = [
     'ot_discovery.export.json_exporter',
     'ot_discovery.gui',
     'ot_discovery.gui.main',
-]
+    'ot_discovery.npcap_util',
+    'winreg',
+] + collect_submodules('scapy')
 
 # Exclude unnecessary modules
 excludes = [
@@ -63,8 +68,8 @@ excludes = [
 ]
 
 a = Analysis(
-    ['ot_discovery/gui/main.py'],
-    pathex=[str(Path(__file__).parent)],
+    ['run_gui.py'],
+    pathex=[SPECPATH],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,

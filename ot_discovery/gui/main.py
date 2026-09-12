@@ -20,6 +20,7 @@ from ..core import OTScanner, ScanConfig, ScanMode
 from ..models.device import Device
 from ..logging_config import setup_logging
 from ..netutil import parse_network
+from ..npcap_util import is_npcap_installed, NPCAP_DOWNLOAD_URL
 from ..paths import LOG_DIR
 
 
@@ -47,6 +48,7 @@ class OTDiscoveryGUI:
 
         self._setup_ui()
         self._setup_styles()
+        self.root.after(200, self._check_npcap)
 
     def _setup_styles(self) -> None:
         style = ttk.Style()
@@ -72,6 +74,19 @@ class OTDiscoveryGUI:
         self.status_var = tk.StringVar(value="Ready")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=5, pady=5)
+
+    def _check_npcap(self) -> None:
+        """Point the user at the Npcap download if it's missing (needed for the fast ARP sweep and DCP scan)."""
+        if is_npcap_installed():
+            return
+        if messagebox.askyesno(
+            "Npcap not found",
+            "Npcap is not installed. Without it, ARP scans fall back to a slower "
+            "per-host method and Profinet/DCP device detection is skipped.\n\n"
+            "Open the Npcap download page now?",
+        ):
+            import webbrowser
+            webbrowser.open(NPCAP_DOWNLOAD_URL)
 
     def _get_available_interfaces(self) -> list[str]:
         """Get list of available network interfaces with IPv4 addresses."""
