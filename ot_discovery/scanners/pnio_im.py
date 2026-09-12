@@ -20,10 +20,18 @@ Endpoint Mapper (ept_map) query first - both captures agree on exactly where
 in that response the port sits (a `00 08 02 00` marker followed by the port
 as a big-endian uint16).
 
-Verified against exactly two manufacturers (ifm, Siemens). Other PROFINET
-stacks might still differ in ways neither capture exercised. Every failure
-mode raises PnioImError or a plain OSError (socket timeout/refusal), so a
-caller can treat both as "no data available" and move on.
+Verified end-to-end (request format, port lookup, and response parsing) for
+ifm and Siemens. A third data point, a Festo CPX-Terminal, matches the
+protocol exactly through the port lookup step but then has its actual Read
+calls rejected - not silently ignored, an explicit DCE/RPC REJECT PDU with
+status nca_server_too_busy, and consistently so (every ~8s over a 5-minute
+capture, not a one-off collision). That looks like a genuine capacity limit
+on that specific device rather than a format mismatch, but it's unconfirmed
+without live access to retry against it - _raise_if_rejected() at least
+surfaces this distinctly instead of it looking like a parse failure.
+
+Every failure mode raises PnioImError or a plain OSError (socket timeout/
+refusal), so a caller can treat both as "no data available" and move on.
 """
 
 from __future__ import annotations
@@ -45,6 +53,21 @@ _OPNUM_READ = 5
 # Marks the start of the UDP-port protocol floor in an ept_map response's
 # "towers" data; the port itself is the big-endian uint16 right after it.
 _PORT_FLOOR_MARKER = bytes.fromhex("00080200")
+
+_PTYPE_REJECT = 6
+
+# DCE 1.1 RPC reject status codes (little-endian uint32 body) worth naming;
+# see The Open Group's "Reject Status Codes and Parameters". Encountered
+# nca_server_too_busy consistently (every ~8s over a 5-minute capture, not a
+# one-off) from a real Festo CPX-Terminal - the request format matches what
+# works against ifm/Siemens devices, so this looks like a genuine capacity
+# limit on that device's RPC handling rather than a compatibility problem.
+_NCA_STATUS_NAMES = {
+    0x1C010014: "nca_server_too_busy",
+    0x1C010002: "nca_op_rng_error (unsupported operation)",
+    0x1C000008: "nca_unk_if (unknown interface)",
+    0x1C000009: "nca_wrong_boot_time",
+}
 
 
 class PnioImError(Exception):
@@ -108,6 +131,14 @@ def _find_read_port(epm_response_body: bytes) -> int:
     return port
 
 
+def _raise_if_rejected(payload: bytes) -> None:
+    if payload[1] != _PTYPE_REJECT:
+        return
+    status = struct.unpack_from("<I", payload, 80)[0] if len(payload) >= 84 else None
+    name = _NCA_STATUS_NAMES.get(status, f"0x{status:08x}" if status is not None else "unknown")
+    raise PnioImError(f"device rejected the RPC call ({name})")
+
+
 def _parse_im0(payload: bytes) -> Im0Record:
     idx = payload.find(b"\xaf\xf0")
     if idx == -1:
@@ -140,6 +171,7 @@ def _find_read_port_for(ip: IPv4Address, timeout: float, sock: socket.socket) ->
     payload, _ = sock.recvfrom(4096)
     if len(payload) < 80:
         raise PnioImError("Endpoint Mapper response shorter than a DCE/RPC header")
+    _raise_if_rejected(payload)
     return _find_read_port(payload[80:])
 
 
@@ -152,4 +184,5 @@ def read_im0(ip: IPv4Address, timeout: float = 2.0) -> Im0Record:
         payload, _ = sock.recvfrom(4096)
     if len(payload) < 80:
         raise PnioImError("response shorter than a DCE/RPC header")
+    _raise_if_rejected(payload)
     return _parse_im0(payload[80:])
