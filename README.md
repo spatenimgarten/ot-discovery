@@ -2,6 +2,12 @@
 
 Asset Management Tool for Automation Networks (OT/ICS).
 
+## Status
+
+- **ARP-Modul: fertig.** Echtes Layer-2-ARP über Npcap (adaptiver Broadcast-Sweep, Fallback auf die Windows-`SendARP`-API ohne Npcap), Hersteller-Identifikation über die vollständige IEEE-OUI-Registry (automatisch nachgeladen), Hostname-Auflösung direkt inline, sowie Erkennung randomisierter/virtueller MAC-Adressen und doppelt vergebener MACs.
+- **DCP-Modul**: Windows-Unterstützung über Npcap implementiert, bislang aber nicht gegen ein reales Profinet-Gerät verifiziert (WLAN erschwert exotische EtherTypes).
+- TCP/UDP/Plugin-Identifikation: unverändert gegenüber der ursprünglichen Implementierung.
+
 ## Features
 
 - **Multi-protocol Discovery**: ARP, DCP (Profinet), TCP, UDP
@@ -87,14 +93,13 @@ ot_discovery/
 
 ## Scan Pipeline
 
-1. **ARP Scan** - Layer 2 discovery, MAC addresses
-2. **DCP Scan** - Profinet device identification (names, vendor/device IDs)
+1. **ARP Scan** - Layer 2 discovery: MAC address, manufacturer (IEEE OUI registry), reverse-DNS hostname, all resolved inline
+2. **DCP Scan** - Profinet device identification (names, vendor/device IDs, device role)
 3. **Merge** - Combine results by IP address
 4. **TCP Scan** - Port scan on discovered devices
 5. **UDP Scan** (optional) - UDP port scan
-6. **Hostname Resolution** - Reverse DNS
-7. **Plugin Identification** - Manufacturer-specific detection
-8. **Export** - CSV/JSON output
+6. **Plugin Identification** - Manufacturer-specific detection
+7. **Export** - CSV/JSON output
 
 ## Plugin System
 
