@@ -14,7 +14,18 @@ COMMON_OT_PORTS = [
     20000, 20001, 44819, 44820, 44821, 44822, 44823, 44824
 ]
 
-DEFAULT_PORTS = list(range(1, 1025)) + COMMON_OT_PORTS
+# "fast" mode: just the OT/industrial ports, nothing else - a quick check of
+# whether known protocols are present, not a real port scan.
+FAST_PORTS = COMMON_OT_PORTS
+
+# "deep" mode (also the default when no mode-specific list is picked): every
+# well-known port plus the OT list, ~1050 ports. Deliberately not all 65535 -
+# a full TCP connect scan of every device on a network that silently drops
+# probes to closed/filtered ports (common for OT gear behind a firewall)
+# would take far longer than is reasonable for a routine scan.
+DEEP_PORTS = list(range(1, 1025)) + COMMON_OT_PORTS
+
+DEFAULT_PORTS = DEEP_PORTS
 
 
 class TCPScanner:

@@ -11,6 +11,7 @@ from typing import Optional, Callable, Awaitable
 from ..models.device import Device
 from ..models.scan_result import ScanResult, ScanType
 from ..scanners import ARPScanner, DCPScanner, TCPScanner, UDPScanner
+from ..scanners.tcp import DEEP_PORTS, FAST_PORTS
 from ..plugins import PluginManager, create_default_plugin_manager
 from ..plugins.gsdml_database import ensure_gsdml_database_loaded
 from ..plugins.vendor_id_database import ensure_vendor_id_database_loaded
@@ -150,9 +151,16 @@ class OTScanner:
 
     async def _run_tcp(self, devices: list[Device]) -> None:
         """Run TCP port scan."""
-        logger.info("Starting TCP scan on %d devices...", len(devices))
+        # Explicit --tcp-ports always wins; otherwise the mode picks how many
+        # ports to check - "fast" just the OT/industrial list, "deep" (and
+        # "custom" with no explicit list) the full well-known range plus that
+        # same OT list.
+        ports = self.config.tcp_ports
+        if ports is None:
+            ports = FAST_PORTS if self.config.mode == ScanMode.FAST else DEEP_PORTS
+        logger.info("Starting TCP scan on %d devices (%d ports)...", len(devices), len(ports))
         scanner = TCPScanner(
-            ports=self.config.tcp_ports,
+            ports=ports,
             timeout=self.config.tcp_timeout,
             concurrency=self.config.tcp_concurrency,
             progress_callback=self._make_progress("TCP Scan"),
