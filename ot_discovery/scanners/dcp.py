@@ -11,6 +11,8 @@ from ipaddress import IPv4Address, IPv4Network
 from typing import Optional, Callable, Awaitable
 
 from ..models.device import Device, Protocol
+from ..plugins.gsdml_database import lookup_model_name
+from ..plugins.vendor_id_database import lookup_vendor_name, VENDOR_ID_LOOKUP_CONFIDENCE
 from .arp import _get_interface_info, _get_default_interface_info
 
 logger = logging.getLogger("ot_discovery.scanners.dcp")
@@ -248,6 +250,22 @@ class DCPScanner:
 
         device.protocols.append(Protocol.PROFINET)
         device.protocols.append(Protocol.DCP)
+
+        # Resolve manufacturer/product family from vendor_id/device_id right
+        # here, same as the ARP scanner does inline for OUI - so both work
+        # standalone (e.g. a DCP-only scan) without depending on the later,
+        # skippable Plugin Identification step.
+        vendor_name = lookup_vendor_name(device.vendor_id)
+        if vendor_name:
+            device.manufacturer = vendor_name
+            device.manufacturer_confidence = VENDOR_ID_LOOKUP_CONFIDENCE
+            device.manufacturer_source = "PI Vendor ID"
+            logger.debug("%s (%s): resolved manufacturer '%s' via PI vendor_id %s",
+                         device.ip, mac, vendor_name, device.vendor_id)
+        product_family = lookup_model_name(device.vendor_id, device.device_id)
+        if product_family:
+            device.raw_data["gsdml_product_family"] = product_family
+
         return device
 
     def _parse_dcp_block(self, device: Device, option: int, suboption: int, data: bytes) -> None:
