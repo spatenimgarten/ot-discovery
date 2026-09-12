@@ -25,26 +25,38 @@ except ImportError:
 DCP_MULTICAST_MAC = b'\x01\x0e\xcf\x00\x00\x00'
 DCP_ETHERTYPE = 0x8892
 
-# Profinet DCP device role bitmask (DCP_OPTION_DEVICE_ROLE block)
+# Frame IDs (IEC 61158-6-10 sec. 4.10.3.2) - request and response use different values.
+DCP_FRAME_ID_REQUEST = 0xfefe
+DCP_FRAME_ID_RESPONSE = 0xfeff
+
+# Service IDs (sec. 4.3.1.4.4) - 0x05 is "Identify"; a device ignores anything else here.
+DCP_SERVICE_ID_IDENTIFY = 0x05
+# ServiceType is a bitfield; bit 0 is the request(0)/response(1) selector (sec. 4.3.1.4.5).
+DCP_SERVICE_TYPE_REQUEST = 0x00
+DCP_SERVICE_TYPE_RESPONSE_BIT = 0x01
+
+# Top-level block options (sec. 4.3.1.3.1). Device name/ID/role are *suboptions* of
+# DCP_OPTION_DEVICE, not options in their own right.
+DCP_OPTION_IP = 0x01
+DCP_OPTION_DEVICE = 0x02
+DCP_OPTION_ALL_SELECTOR = 0xff
+
+DCP_SUBOPTION_IP_PARAMETER = 0x02
+
+DCP_SUBOPTION_DEVICE_NAMEOFSTATION = 0x02
+DCP_SUBOPTION_DEVICE_ID = 0x03
+DCP_SUBOPTION_DEVICE_ROLE = 0x04
+DCP_SUBOPTION_DEVICE_ALIAS_NAME = 0x06
+
+DCP_SUBOPTION_ALL_SELECTOR = 0xff
+
+# Profinet DCP device role bitmask (DCP_SUBOPTION_DEVICE_ROLE block)
 DCP_ROLE_BITS = {
     0x01: "IO-Device",
     0x02: "IO-Controller",
     0x04: "IO-Multidevice",
     0x08: "PN-Supervisor",
 }
-
-DCP_SERVICE_ID = 0x01
-DCP_BLOCK_QUALIFIER = 0x0001
-DCP_OPTION_IP = 0x01
-DCP_OPTION_DEVICE_NAME = 0x02
-DCP_OPTION_VENDOR_ID = 0x03
-DCP_OPTION_DEVICE_ID = 0x04
-DCP_OPTION_DEVICE_ROLE = 0x05
-DCP_OPTION_ALIAS_NAME = 0x06
-
-DCP_FRAME_ID = 0xfefe
-DCP_SERVICE_REQUEST = 0x01
-DCP_SERVICE_RESPONSE = 0x02
 
 
 class DCPScanner:
@@ -104,14 +116,16 @@ class DCPScanner:
                              device.ip, device.mac, device.dcp_name,
                              device.vendor_id, device.device_id)
 
-        sniffer = AsyncSniffer(filter="ether proto 0x8892", prn=on_packet, store=False)
+        sniffer = AsyncSniffer(
+            filter="ether proto 0x8892", prn=on_packet, store=False, iface=self.interface,
+        )
         sniffer.start()
         time.sleep(0.1)  # let the sniffer attach before the first request
 
         try:
             request = self._build_dcp_identify()
             for _ in range(max(1, self.retries)):
-                sendp(Raw(request), verbose=0)
+                sendp(Raw(request), iface=self.interface, verbose=0)
                 time.sleep(0.1)
             time.sleep(self.timeout)
         finally:
@@ -166,35 +180,28 @@ class DCPScanner:
         return devices
 
     def _build_dcp_identify(self) -> bytes:
-        """Build DCP Identify Request frame."""
+        """Build a DCP Identify Request frame using the "All Selector" block,
+        which asks every listening device to report everything it knows
+        (IP, name, vendor/device ID, role, ...) in one response."""
         eth_dst = DCP_MULTICAST_MAC
         eth_src = self._src_mac
         eth_type = struct.pack('!H', DCP_ETHERTYPE)
 
-        frame_id = struct.pack('!H', DCP_FRAME_ID)
-        service_id = struct.pack('!B', DCP_SERVICE_ID)
-        service_type = struct.pack('!B', DCP_SERVICE_REQUEST)
-        xid = struct.pack('!I', 0x12345678)
-        reserved = struct.pack('!H', 0)
+        frame_id = struct.pack('!H', DCP_FRAME_ID_REQUEST)
+        service_id = struct.pack('!B', DCP_SERVICE_ID_IDENTIFY)
+        service_type = struct.pack('!B', DCP_SERVICE_TYPE_REQUEST)
+        xid = struct.pack('!I', 0x01000001)
+        response_delay = struct.pack('!H', 0)
 
-        block_qualifier = struct.pack('!H', DCP_BLOCK_QUALIFIER)
-        block_info = struct.pack('!H', 0)
+        block = struct.pack('!BBH', DCP_OPTION_ALL_SELECTOR, DCP_SUBOPTION_ALL_SELECTOR, 0)
 
-        options = b''
-        for opt in [DCP_OPTION_IP, DCP_OPTION_DEVICE_NAME, DCP_OPTION_VENDOR_ID,
-                    DCP_OPTION_DEVICE_ID, DCP_OPTION_DEVICE_ROLE, DCP_OPTION_ALIAS_NAME]:
-            options += struct.pack('!B', opt) + struct.pack('!B', 0)
-
-        block_len = struct.pack('!H', len(options))
-        block = block_qualifier + block_info + block_len + options
-
-        dcp_data = block
-        dcp_header = frame_id + service_id + service_type + xid + reserved + struct.pack('!H', len(dcp_data))
-        return eth_dst + eth_src + eth_type + dcp_header + dcp_data
+        dcp_header = (frame_id + service_id + service_type + xid + response_delay
+                      + struct.pack('!H', len(block)))
+        return eth_dst + eth_src + eth_type + dcp_header + block
 
     def _parse_dcp_response(self, data: bytes) -> Optional[Device]:
-        """Parse DCP Identify Response."""
-        if len(data) < 30:
+        """Parse a DCP Identify Response frame."""
+        if len(data) < 26:
             return None
 
         eth_type = struct.unpack('!H', data[12:14])[0]
@@ -202,77 +209,60 @@ class DCPScanner:
             return None
 
         frame_id = struct.unpack('!H', data[14:16])[0]
-        if frame_id != DCP_FRAME_ID:
+        if frame_id != DCP_FRAME_ID_RESPONSE:
             return None
 
+        service_id = data[16]
         service_type = data[17]
-        if service_type != DCP_SERVICE_RESPONSE:
+        if service_id != DCP_SERVICE_ID_IDENTIFY or not (service_type & DCP_SERVICE_TYPE_RESPONSE_BIT):
             return None
 
         src_mac = data[6:12]
         mac = ':'.join(f'{b:02x}' for b in src_mac)
 
-        offset = 24
+        data_length = struct.unpack('!H', data[24:26])[0]
+        offset = 26
+        end = min(len(data), offset + data_length)
         device = Device(ip=IPv4Address("0.0.0.0"), mac=mac)
 
-        while offset < len(data) - 4:
-            if offset + 4 > len(data):
-                break
-            block_qual = struct.unpack('!H', data[offset:offset+2])[0]
-            block_info = struct.unpack('!H', data[offset+2:offset+4])[0]
-            offset += 4
+        while offset + 4 <= end:
+            option = data[offset]
+            suboption = data[offset + 1]
+            block_len = struct.unpack('!H', data[offset + 2:offset + 4])[0]
+            block_start = offset + 4
+            block_data = data[block_start:block_start + block_len]
 
-            if offset + 2 > len(data):
-                break
-            block_len = struct.unpack('!H', data[offset:offset+2])[0]
-            offset += 2
+            self._parse_dcp_block(device, option, suboption, block_data)
 
-            block_data = data[offset:offset+block_len]
-            offset += block_len
+            offset = block_start + block_len
+            if block_len % 2:
+                offset += 1  # blocks are padded to an even length
 
-            self._parse_dcp_block(device, block_data)
-
-        if device.ip == IPv4Address("0.0.0.0"):
+        if device.ip == IPv4Address("0.0.0.0") and not device.dcp_name:
             return None
 
         device.protocols.append(Protocol.PROFINET)
         device.protocols.append(Protocol.DCP)
         return device
 
-    def _parse_dcp_block(self, device: Device, data: bytes) -> None:
-        """Parse DCP block options."""
-        offset = 0
-        while offset < len(data) - 2:
-            if offset + 2 > len(data):
-                break
-            option = data[offset]
-            suboption = data[offset + 1]
-            offset += 2
+    def _parse_dcp_block(self, device: Device, option: int, suboption: int, data: bytes) -> None:
+        """Parse one DCP block's payload (Identify responses prefix IP/Device blocks
+        with a 2-byte BlockInfo field ahead of the actual value)."""
+        payload = data[2:] if option in (DCP_OPTION_IP, DCP_OPTION_DEVICE) else data
 
-            if offset + 2 > len(data):
-                break
-            length = struct.unpack('!H', data[offset:offset+2])[0]
-            offset += 2
-
-            if offset + length > len(data):
-                break
-            value = data[offset:offset+length]
-            offset += length
-
-            if option == DCP_OPTION_IP and suboption == 0x01:
-                if length == 4:
-                    device.ip = IPv4Address(struct.unpack('!I', value)[0])
-            elif option == DCP_OPTION_DEVICE_NAME:
-                device.dcp_name = value.decode('ascii', errors='ignore')
-            elif option == DCP_OPTION_VENDOR_ID and length == 2:
-                device.vendor_id = struct.unpack('!H', value)[0]
-            elif option == DCP_OPTION_DEVICE_ID and length == 2:
-                device.device_id = struct.unpack('!H', value)[0]
-            elif option == DCP_OPTION_DEVICE_ROLE and length == 2:
-                role_bits = struct.unpack('!H', value)[0]
+        if option == DCP_OPTION_IP and suboption == DCP_SUBOPTION_IP_PARAMETER:
+            if len(payload) >= 4:
+                device.ip = IPv4Address(struct.unpack('!I', payload[:4])[0])
+        elif option == DCP_OPTION_DEVICE:
+            if suboption == DCP_SUBOPTION_DEVICE_NAMEOFSTATION:
+                device.dcp_name = payload.decode('ascii', errors='ignore')
+            elif suboption == DCP_SUBOPTION_DEVICE_ID and len(payload) >= 4:
+                device.vendor_id, device.device_id = struct.unpack('!HH', payload[:4])
+            elif suboption == DCP_SUBOPTION_DEVICE_ROLE and len(payload) >= 1:
+                role_bits = payload[0]
                 device.raw_data['dcp_role_bits'] = role_bits
                 roles = [name for bit, name in DCP_ROLE_BITS.items() if role_bits & bit]
                 if roles:
                     device.dcp_role = ", ".join(roles)
-            elif option == DCP_OPTION_ALIAS_NAME:
-                device.raw_data['dcp_alias_name'] = value.decode('ascii', errors='ignore')
+            elif suboption == DCP_SUBOPTION_DEVICE_ALIAS_NAME:
+                device.raw_data['dcp_alias_name'] = payload.decode('ascii', errors='ignore')
