@@ -20,7 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "netifaces>=0.11.0",
+    "netifaces2>=0.0.22; sys_platform == 'win32'",
+    "netifaces>=0.11.0; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
