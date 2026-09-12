@@ -191,7 +191,10 @@ class AVMPlugin(PluginBase):
     # AVM FRITZ!Box OUIs
     TCP_PORTS = [80, 443, 53, 67, 68, 1900, 5060, 5061]
     UDP_PORTS = [53, 67, 68, 1900, 5060, 5061]
-    HOSTNAME_PATTERNS = ["fritz.box", "fritz.box.", "fritz", "avm"]
+    # Checked against the hostname's first DNS label only (see
+    # PluginBase._check_hostname) - a FritzBox's own hostname is "fritz.box",
+    # not the ".fritz.box" domain suffix it hands out to every DHCP client.
+    HOSTNAME_PATTERNS = ["fritz", "avm", "speedport"]
 
     def _get_device_type_hint(self, device: Device) -> Optional[DeviceType]:
         return DeviceType.ROUTER

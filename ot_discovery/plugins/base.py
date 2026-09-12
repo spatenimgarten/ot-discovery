@@ -82,12 +82,18 @@ class PluginBase(ABC):
         return device.oui.upper() in [oui.upper() for oui in get_all_ouis_for_manufacturer(self.NAME)]
 
     def _check_hostname(self, device: Device) -> bool:
-        """Check if device hostname matches manufacturer patterns."""
+        """Check if the device's own hostname label matches manufacturer patterns.
+
+        Only the first DNS label is checked, not the whole FQDN: a router's DHCP
+        server commonly appends its own domain (e.g. ".fritz.box") to every
+        client's hostname, which would otherwise make every device on the
+        network look like it was made by whoever owns that domain.
+        """
         if not device.hostname:
             return False
-        hostname = device.hostname.lower()
+        hostname_label = device.hostname.lower().split('.')[0]
         patterns = getattr(self, 'HOSTNAME_PATTERNS', [])
-        return any(p.lower() in hostname for p in patterns)
+        return any(p.lower() in hostname_label for p in patterns)
 
     def _check_tcp_ports(self, device: Device) -> bool:
         if not self.TCP_PORTS:
