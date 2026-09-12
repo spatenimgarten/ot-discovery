@@ -31,7 +31,34 @@ else:
 
 
 def _get_interface_info(interface: str) -> tuple[Optional[bytes], Optional[IPv4Address]]:
-    """Get MAC and IP for an interface (cross-platform)."""
+    """Get MAC and IP for an interface (cross-platform).
+
+    On Windows, `interface` is the connection name shown throughout this app
+    and to scapy (e.g. "WLAN", "Ethernet 9" - what get_windows_if_list()
+    returns as 'name', and what sendp()/AsyncSniffer() accept as `iface`).
+    netifaces instead keys interfaces by hardware *description* ("Intel(R)
+    Wi-Fi 6E AX210 160MHz"), so netifaces.ifaddresses(interface) reliably
+    raises for any name this app actually uses - caught below, silently
+    falling through to the b'\\x00'*6 fallback in every caller. Try scapy's
+    own list first so a MAC actually gets resolved.
+    """
+    if sys.platform == "win32":
+        try:
+            from scapy.arch.windows import get_windows_if_list
+            for iface in get_windows_if_list():
+                if iface.get("name") == interface:
+                    mac = bytes(int(b, 16) for b in iface["mac"].split(':')) if iface.get("mac") else None
+                    ip = None
+                    for addr in iface.get("ips", []):
+                        if ':' not in addr and not addr.startswith('127.'):
+                            ip = IPv4Address(addr)
+                            break
+                    if mac:
+                        return mac, ip
+                    break
+        except Exception:
+            pass
+
     try:
         import netifaces
         addrs = netifaces.ifaddresses(interface)

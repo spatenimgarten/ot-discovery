@@ -80,12 +80,15 @@ class DCPScanner:
 
     async def scan(self, network: IPv4Network) -> list[Device]:
         """Scan network via DCP Identify requests."""
+        logger.info("DCP scan starting on %s (interface=%s, timeout=%.1fs, retries=%d)",
+                    network, self.interface or "auto-detect", self.timeout, self.retries)
         await self._initialize_interface()
+        logger.debug("Using source MAC=%s", self._src_mac.hex(':') if self._src_mac else None)
 
         if sys.platform == "win32":
             if HAVE_SCAPY:
                 try:
-                    return await self._scan_windows()
+                    return await self._scan_windows(network)
                 except Exception as e:
                     logger.warning("Scapy/Npcap DCP sweep failed (%s), skipping DCP", e)
             else:
@@ -96,7 +99,7 @@ class DCPScanner:
 
         return await self._scan_linux(network)
 
-    async def _scan_windows(self) -> list[Device]:
+    async def _scan_windows(self, network: IPv4Network) -> list[Device]:
         """DCP Identify sweep via Npcap: multicast the request, collect responses."""
         loop = asyncio.get_event_loop()
         logger.debug("DCP Identify sweep via Npcap (timeout=%.1fs, retries=%d)",
@@ -104,7 +107,7 @@ class DCPScanner:
         devices = await loop.run_in_executor(None, self._dcp_sweep_scapy)
         if self.progress_callback:
             await self.progress_callback(len(devices), max(1, len(devices)))
-        logger.info("DCP sweep found %d device(s)", len(devices))
+        logger.info("DCP scan finished on %s: %d device(s) found", network, len(devices))
         return devices
 
     def _dcp_sweep_scapy(self) -> list[Device]:
@@ -180,6 +183,7 @@ class DCPScanner:
         finally:
             sock.close()
 
+        logger.info("DCP scan finished on %s: %d device(s) found", network, len(devices))
         return devices
 
     def _build_dcp_identify(self) -> bytes:
@@ -265,6 +269,8 @@ class DCPScanner:
         product_family = lookup_model_name(device.vendor_id, device.device_id)
         if product_family:
             device.raw_data["gsdml_product_family"] = product_family
+            logger.debug("%s (%s): resolved product family '%s' via local GSDML database",
+                         device.ip, mac, product_family)
 
         return device
 
