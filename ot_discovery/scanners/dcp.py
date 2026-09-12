@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 import socket
 import struct
 import sys
@@ -190,8 +191,12 @@ class DCPScanner:
         frame_id = struct.pack('!H', DCP_FRAME_ID_REQUEST)
         service_id = struct.pack('!B', DCP_SERVICE_ID_IDENTIFY)
         service_type = struct.pack('!B', DCP_SERVICE_TYPE_REQUEST)
-        xid = struct.pack('!I', 0x01000001)
-        response_delay = struct.pack('!H', 0)
+        # Randomized so repeated scans aren't mistaken for retransmits/duplicates
+        # of an earlier request by devices that dedupe on (source MAC, Xid).
+        xid = struct.pack('!I', random.getrandbits(32))
+        # Some devices don't answer at all when this is 0; 128ms (observed from a
+        # real TIA Portal "accessible devices" scan) is a safe, widely-used value.
+        response_delay = struct.pack('!H', 128)
 
         block = struct.pack('!BBH', DCP_OPTION_ALL_SELECTOR, DCP_SUBOPTION_ALL_SELECTOR, 0)
 
