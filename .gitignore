@@ -16,6 +16,11 @@ logs/
 *.spec.bak
 _version.txt
 
+# Scan output (contains real network data)
+scan_results.csv
+scan_results.json
+*.pcap
+
 # Editor/OS
 .vscode/
 .idea/
