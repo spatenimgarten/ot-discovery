@@ -1,43 +1,24 @@
-"""Base plugin classes for manufacturer identification."""
+"""Base plugin class for manufacturer-specific device detail extraction.
+
+Manufacturer identification is no longer a plugin concern: device.manufacturer
+is resolved generically before any plugin runs, via DCP/I&M vendor_id against
+the PI vendor ID registry, or MAC OUI as a fallback (see
+PluginManager._resolve_manufacturer). A plugin is then selected purely by
+matching its NAME against that already-known manufacturer string - it never
+decides "is this my device", only "given that this is my device, what else
+can I find out about it" (device type, firmware, serial number, and
+eventually vulnerabilities).
+"""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional
-from ipaddress import IPv4Address
 
-from ..models.device import Device, DeviceType
-
-
-@dataclass
-class PluginMatchResult:
-    """Result of plugin match() check."""
-    matched: bool
-    confidence: float = 0.0
-    manufacturer: Optional[str] = None
-    device_type_hint: Optional[DeviceType] = None
-    # True when matched on vendor_id/OUI/hostname - real evidence of who made the
-    # device. False for a port-only match, which just means "this port happens to
-    # be open" and is true of most devices for most plugins simultaneously - too
-    # weak to justify overriding an already-known manufacturer.
-    strong: bool = False
-    metadata: dict = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+from ..models.device import Device
 
 
 class PluginBase(ABC):
     """Base class for manufacturer plugins."""
 
     NAME: str = "Base Plugin"
-    VENDOR_IDS: list[int] = []
-    # OUIs are now in the central database
-    TCP_PORTS: list[int] = []
-    UDP_PORTS: list[int] = []
-    HTTP_HEADERS: dict[str, str] = {}
-    SNMP_OIDS: dict[str, str] = {}
-    OPC_UA_SERVERS: list[str] = []
 
     def __init__(self):
         self._name = self.NAME
@@ -47,115 +28,12 @@ class PluginBase(ABC):
         return self._name
 
     @abstractmethod
-    def match(self, device: Device) -> PluginMatchResult:
-        """
-        Fast check if this plugin matches the device.
-        Should be lightweight - no network I/O.
-        """
-        pass
-
-    @abstractmethod
-    def identify(self, device: Device) -> Device:
-        """
-        Determine device type and basic info.
-        May perform network queries.
-        """
-        pass
-
-    @abstractmethod
     def details(self, device: Device) -> Device:
+        """Fill in device_type and any vendor-specific details (firmware,
+        serial number, order number, vulnerabilities, ...). May perform
+        network queries. Only called once device.manufacturer already
+        matches this plugin's name - must not set it to a *different*
+        manufacturer, though resetting it to None/"Unknown" is fine if
+        something discovered here contradicts the earlier identification.
         """
-        Extract detailed information: firmware, serial, order number, etc.
-        May perform extensive network queries.
-        """
-        pass
-
-    def _check_vendor_id(self, device: Device) -> bool:
-        return device.vendor_id in self.VENDOR_IDS if device.vendor_id else False
-
-    def _check_oui(self, device: Device) -> bool:
-        """Check if device MAC matches any OUI for this manufacturer."""
-        if not device.oui:
-            return False
-        # Use central OUI database
-        from .oui_database import get_all_ouis_for_manufacturer
-        return device.oui.upper() in [oui.upper() for oui in get_all_ouis_for_manufacturer(self.NAME)]
-
-    def _check_hostname(self, device: Device) -> bool:
-        """Check if the device's own hostname label matches manufacturer patterns.
-
-        Only the first DNS label is checked, not the whole FQDN: a router's DHCP
-        server commonly appends its own domain (e.g. ".fritz.box") to every
-        client's hostname, which would otherwise make every device on the
-        network look like it was made by whoever owns that domain.
-        """
-        if not device.hostname:
-            return False
-        hostname_label = device.hostname.lower().split('.')[0]
-        patterns = getattr(self, 'HOSTNAME_PATTERNS', [])
-        return any(p.lower() in hostname_label for p in patterns)
-
-    def _check_tcp_ports(self, device: Device) -> bool:
-        if not self.TCP_PORTS:
-            return False
-        return any(port in device.tcp_ports for port in self.TCP_PORTS)
-
-    def _check_udp_ports(self, device: Device) -> bool:
-        if not self.UDP_PORTS:
-            return False
-        return any(port in device.udp_ports for port in self.UDP_PORTS)
-
-    def _calculate_confidence(self, checks: list[bool]) -> float:
-        if not checks:
-            return 0.0
-        return sum(checks) / len(checks)
-
-    def match(self, device: Device) -> PluginMatchResult:
-        """
-        Default match implementation:
-        - Strong match: vendor_id OR OUI match OR hostname match (high confidence)
-        - Weak match: port match only (low confidence)
-        """
-        vendor_match = self._check_vendor_id(device)
-        oui_match = self._check_oui(device)
-        hostname_match = self._check_hostname(device)
-        tcp_match = self._check_tcp_ports(device)
-        udp_match = self._check_udp_ports(device)
-
-        # Strong indicators
-        strong_checks = [vendor_match, oui_match, hostname_match]
-        # Weak indicators
-        weak_checks = [tcp_match, udp_match]
-
-        has_strong = any(strong_checks)
-        has_weak = any(weak_checks)
-
-        if has_strong:
-            # High confidence if vendor/OUi/hostname matches
-            confidence = self._calculate_confidence(strong_checks) * 0.8 + self._calculate_confidence(weak_checks) * 0.2
-            return PluginMatchResult(
-                matched=True,
-                confidence=confidence,
-                manufacturer=self.NAME,
-                device_type_hint=self._get_device_type_hint(device),
-                strong=True,
-            )
-        elif has_weak:
-            # Low confidence for port-only matches. Common OT ports (80, 443, 161,
-            # 502...) are shared by nearly every plugin, so this matches most
-            # devices regardless of actual vendor - not enough to claim a
-            # manufacturer or device type, only to note the protocol looks possible.
-            confidence = self._calculate_confidence(weak_checks) * 0.3
-            return PluginMatchResult(
-                matched=True,
-                confidence=confidence,
-                manufacturer=self.NAME if self.NAME != "Generic" else "Unknown",
-                device_type_hint=self._get_device_type_hint(device),
-                strong=False,
-            )
-        else:
-            return PluginMatchResult(matched=False, confidence=0.0)
-
-    def _get_device_type_hint(self, device: Device) -> Optional[DeviceType]:
-        """Override in subclass for device type hints."""
-        return None
+        raise NotImplementedError

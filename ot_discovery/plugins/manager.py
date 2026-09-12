@@ -1,12 +1,18 @@
-"""Plugin manager for loading and running manufacturer plugins."""
+"""Plugin manager for loading and running manufacturer plugins.
+
+Manufacturer is resolved generically (PI vendor ID registry, then MAC OUI)
+before any plugin runs; a plugin is then picked purely by matching its NAME
+against that manufacturer string. Plugins don't compete to claim a device -
+there's nothing left for them to decide about identity, only about what
+further detail they can extract once the manufacturer is already known.
+"""
 
 import logging
 from typing import Optional
-from ipaddress import IPv4Address
 
 from ..models.device import Device, Protocol
 from ..scanners.pnio_im import PnioImError, read_im0
-from .base import PluginBase, PluginMatchResult
+from .base import PluginBase
 from .oui_database import lookup_manufacturer, OUI_LOOKUP_CONFIDENCE
 from .vendor_id_database import lookup_vendor_name, VENDOR_ID_LOOKUP_CONFIDENCE
 
@@ -44,123 +50,48 @@ class PluginManager:
         """List all registered plugin names."""
         return [p.name for p in self._plugins]
 
-    def match_device(self, device: Device) -> list[PluginMatchResult]:
-        """Run match() on all plugins, return sorted by confidence."""
-        logger.info("=== Matching device %s (MAC: %s, OUI: %s) ===", 
-                    device.ip, device.mac, device.oui)
-        
-        # Also check OUI database directly
+    def _resolve_manufacturer(self, device: Device) -> Device:
+        """Determine device.manufacturer generically, if not already known.
+
+        ARP may already have set it via OUI inline during the scan itself;
+        this only fills the gap - PI vendor ID first (reported by the device
+        itself via DCP/I&M, so more authoritative than the OUI, which only
+        identifies the NIC/chipset maker and can differ from the actual
+        product vendor), then OUI as a fallback.
+        """
+        if device.manufacturer and device.manufacturer != "Unknown":
+            return device
+
+        vendor_mfr = lookup_vendor_name(device.vendor_id)
+        if vendor_mfr:
+            logger.info("  Manufacturer set to %s via PI vendor_id database", vendor_mfr)
+            device.manufacturer = vendor_mfr
+            device.manufacturer_confidence = VENDOR_ID_LOOKUP_CONFIDENCE
+            device.manufacturer_source = "PI Vendor ID"
+            return device
+
         oui_mfr = lookup_manufacturer(device.mac) if device.mac else None
         if oui_mfr:
-            logger.info("OUI database lookup for %s: %s", device.mac, oui_mfr)
-        
-        results = []
+            logger.info("  Manufacturer set to %s via OUI database", oui_mfr)
+            device.manufacturer = oui_mfr
+            device.manufacturer_confidence = OUI_LOOKUP_CONFIDENCE
+            device.manufacturer_source = "OUI"
+        return device
+
+    def _find_plugin_for_manufacturer(self, manufacturer: Optional[str]) -> Optional[PluginBase]:
+        """Match a plugin by manufacturer name, e.g. "SIEMENS AG" -> SiemensPlugin."""
+        if not manufacturer:
+            return None
+        needle = manufacturer.lower()
         for plugin in self._plugins:
-            try:
-                result = plugin.match(device)
-                if result.matched:
-                    results.append(result)
-                    logger.debug("  Plugin '%s' matched: confidence=%.2f, type_hint=%s",
-                                plugin.name, result.confidence, 
-                                result.device_type_hint.value if result.device_type_hint else "None")
-                else:
-                    logger.debug("  Plugin '%s' did not match", plugin.name)
-            except Exception as e:
-                logger.warning("  Plugin '%s' raised exception: %s", plugin.name, e)
-        
-        results.sort(key=lambda r: r.confidence, reverse=True)
-        
-        if results:
-            top = results[0]
-            logger.info("Top match: %s (confidence=%.2f)", top.manufacturer, top.confidence)
-            if len(results) > 1:
-                logger.info("  Runner-up: %s (confidence=%.2f)", 
-                           results[1].manufacturer, results[1].confidence)
-        else:
-            logger.warning("No plugin matched device %s", device.ip)
-        
-        return results
-
-    def identify_device(self, device: Device) -> Device:
-        """Run identify() on the TOP matching plugin only."""
-        matches = self.match_device(device)
-        if matches:
-            # Only use top match, and only if it's a strong one (vendor_id/OUI/
-            # hostname). A port-only match is true of most devices for most
-            # plugins at once (everyone has 80/443/161 open) and isn't real
-            # evidence of manufacturer - letting it win would just be a coin
-            # flip between whichever industrial plugins happen to share a port.
-            top_match = matches[0]
-            plugin = self._plugin_map.get(top_match.manufacturer) if top_match.strong else None
-            if plugin:
-                try:
-                    old_type = device.device_type
-                    old_mfr = device.manufacturer
-                    device = plugin.identify(device)
-                    if device.device_type != old_type:
-                        logger.info("  Identified %s as %s (was %s)",
-                                   device.ip,
-                                   device.device_type.value if device.device_type else "None",
-                                   old_type.value if old_type else "None")
-                    # Only plugins that actually confirm a manufacturer set it to
-                    # their own name (e.g. Siemens, AVM); Generic never does. Compare
-                    # against the plugin name rather than old_mfr, since a plugin
-                    # confirming the same manufacturer the OUI already guessed should
-                    # still upgrade it from an OUI guess to a verified match.
-                    if device.manufacturer == plugin.name:
-                        upgraded = device.manufacturer != old_mfr or device.manufacturer_source != "Plugin"
-                        device.manufacturer_confidence = top_match.confidence
-                        device.manufacturer_source = "Plugin"
-                        if upgraded:
-                            logger.info("  Manufacturer set to %s (was %s, confidence=%.2f)",
-                                       device.manufacturer, old_mfr or "None", top_match.confidence)
-                except Exception as e:
-                    logger.error("  Plugin '%s' identify() failed: %s", plugin.name, e)
-
-        # No dedicated plugin covers every vendor in the database (e.g. ABB,
-        # Rockwell, Espressif). Fall back to the PI vendor_id registry first
-        # when a DCP/I&M vendor_id is known - it's reported by the device
-        # itself, more authoritative than the OUI (which only identifies the
-        # NIC/chipset maker and can differ from the actual product vendor) -
-        # then to the raw OUI lookup if that's not available either.
-        if not device.manufacturer or device.manufacturer == "Unknown":
-            vendor_mfr = lookup_vendor_name(device.vendor_id)
-            if vendor_mfr:
-                logger.info("  Manufacturer set to %s via PI vendor_id database fallback", vendor_mfr)
-                device.manufacturer = vendor_mfr
-                device.manufacturer_confidence = VENDOR_ID_LOOKUP_CONFIDENCE
-                device.manufacturer_source = "PI Vendor ID"
-            else:
-                oui_mfr = lookup_manufacturer(device.mac) if device.mac else None
-                if oui_mfr:
-                    logger.info("  Manufacturer set to %s via OUI database fallback", oui_mfr)
-                    device.manufacturer = oui_mfr
-                    device.manufacturer_confidence = OUI_LOOKUP_CONFIDENCE
-                    device.manufacturer_source = "OUI"
-
-        return device
-
-    def get_details(self, device: Device) -> Device:
-        """Run details() on the TOP matching plugin only."""
-        matches = self.match_device(device)
-        if not matches:
-            return device
-        
-        # Only use top match, and only if it's a strong one (see identify_device).
-        top_match = matches[0]
-        plugin = self._plugin_map.get(top_match.manufacturer) if top_match.strong else None
-        if plugin:
-            try:
-                device = plugin.details(device)
-                logger.debug("  Plugin '%s' details() completed", plugin.name)
-            except Exception as e:
-                logger.error("  Plugin '%s' details() failed: %s", plugin.name, e)
-        return device
+            if plugin.name != "Generic" and plugin.name.lower() in needle:
+                return plugin
+        return None
 
     def _read_generic_im0(self, device: Device) -> Device:
         """Read PROFINET I&M0 (order number, serial, hardware/firmware revision).
 
-        Vendor-neutral, unlike plugin.details() (e.g. Siemens' S7comm/SZL
+        Vendor-neutral, unlike a plugin's details() (e.g. Siemens' S7comm/SZL
         reader) - only attempted for devices that already answered DCP, since
         I&M0 is a PROFINET-specific read that non-PROFINET devices won't have
         a listener for at all.
@@ -186,11 +117,29 @@ class PluginManager:
         return device
 
     def run_full_identification(self, device: Device) -> Device:
-        """Run complete plugin pipeline: match -> identify -> generic I&M0 -> vendor details."""
+        """Resolve manufacturer, read generic I&M0, then run the matching plugin's details()."""
         logger.info("Starting full identification for %s", device.ip)
-        device = self.identify_device(device)
+
+        device = self._resolve_manufacturer(device)
         device = self._read_generic_im0(device)
-        device = self.get_details(device)
+        # I&M0 may have just filled in vendor_id where DCP didn't - retry if
+        # the manufacturer still isn't known.
+        if not device.manufacturer or device.manufacturer == "Unknown":
+            device = self._resolve_manufacturer(device)
+
+        plugin = self._find_plugin_for_manufacturer(device.manufacturer) or self._plugin_map.get("Generic")
+        if plugin:
+            try:
+                old_type = device.device_type
+                device = plugin.details(device)
+                if device.device_type != old_type:
+                    logger.info("  Identified %s as %s (was %s)", device.ip,
+                                device.device_type.value if device.device_type else "None",
+                                old_type.value if old_type else "None")
+                logger.debug("  Plugin '%s' details() completed", plugin.name)
+            except Exception as e:
+                logger.error("  Plugin '%s' details() failed: %s", plugin.name, e)
+
         logger.info("Final: %s -> Manufacturer: %s, Type: %s, Firmware: %s",
                     device.ip,
                     device.manufacturer,
