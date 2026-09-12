@@ -15,6 +15,11 @@ class PluginMatchResult:
     confidence: float = 0.0
     manufacturer: Optional[str] = None
     device_type_hint: Optional[DeviceType] = None
+    # True when matched on vendor_id/OUI/hostname - real evidence of who made the
+    # device. False for a port-only match, which just means "this port happens to
+    # be open" and is true of most devices for most plugins simultaneously - too
+    # weak to justify overriding an already-known manufacturer.
+    strong: bool = False
     metadata: dict = None
 
     def __post_init__(self):
@@ -127,15 +132,20 @@ class PluginBase(ABC):
                 confidence=confidence,
                 manufacturer=self.NAME,
                 device_type_hint=self._get_device_type_hint(device),
+                strong=True,
             )
         elif has_weak:
-            # Low confidence for port-only matches
+            # Low confidence for port-only matches. Common OT ports (80, 443, 161,
+            # 502...) are shared by nearly every plugin, so this matches most
+            # devices regardless of actual vendor - not enough to claim a
+            # manufacturer or device type, only to note the protocol looks possible.
             confidence = self._calculate_confidence(weak_checks) * 0.3
             return PluginMatchResult(
                 matched=True,
                 confidence=confidence,
                 manufacturer=self.NAME if self.NAME != "Generic" else "Unknown",
                 device_type_hint=self._get_device_type_hint(device),
+                strong=False,
             )
         else:
             return PluginMatchResult(matched=False, confidence=0.0)

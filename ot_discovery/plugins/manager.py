@@ -83,9 +83,13 @@ class PluginManager:
         """Run identify() on the TOP matching plugin only."""
         matches = self.match_device(device)
         if matches:
-            # Only use top match
+            # Only use top match, and only if it's a strong one (vendor_id/OUI/
+            # hostname). A port-only match is true of most devices for most
+            # plugins at once (everyone has 80/443/161 open) and isn't real
+            # evidence of manufacturer - letting it win would just be a coin
+            # flip between whichever industrial plugins happen to share a port.
             top_match = matches[0]
-            plugin = self._plugin_map.get(top_match.manufacturer)
+            plugin = self._plugin_map.get(top_match.manufacturer) if top_match.strong else None
             if plugin:
                 try:
                     old_type = device.device_type
@@ -130,9 +134,9 @@ class PluginManager:
         if not matches:
             return device
         
-        # Only use top match
+        # Only use top match, and only if it's a strong one (see identify_device).
         top_match = matches[0]
-        plugin = self._plugin_map.get(top_match.manufacturer)
+        plugin = self._plugin_map.get(top_match.manufacturer) if top_match.strong else None
         if plugin:
             try:
                 device = plugin.details(device)
