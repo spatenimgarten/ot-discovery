@@ -13,6 +13,7 @@ from typing import Optional
 from ..models.device import Device, Protocol
 from ..scanners.pnio_im import PnioImError, read_im0
 from .base import PluginBase
+from .gsdml_database import lookup_model_name
 from .oui_database import lookup_manufacturer, OUI_LOOKUP_CONFIDENCE
 from .vendor_id_database import lookup_vendor_name, VENDOR_ID_LOOKUP_CONFIDENCE
 
@@ -116,6 +117,21 @@ class PluginManager:
                     device.ip, im0.order_id, im0.serial_number, im0.hardware_revision, im0.firmware)
         return device
 
+    def _resolve_device_family(self, device: Device) -> Device:
+        """Look up a device family/model name from locally-provided GSDML files.
+
+        There's no central registry for this (unlike vendor_id/OUI) - only
+        useful when the user has actually dropped the relevant manufacturer's
+        GSDML .zip into data/gsdml/. Mainly a fallback for devices whose live
+        I&M0/S7comm read didn't give a usable name.
+        """
+        if "gsdml_product_family" in device.raw_data:
+            return device
+        name = lookup_model_name(device.vendor_id, device.device_id)
+        if name:
+            device.raw_data["gsdml_product_family"] = name
+        return device
+
     def run_full_identification(self, device: Device) -> Device:
         """Resolve manufacturer, read generic I&M0, then run the matching plugin's details()."""
         logger.info("Starting full identification for %s", device.ip)
@@ -126,6 +142,7 @@ class PluginManager:
         # the manufacturer still isn't known.
         if not device.manufacturer or device.manufacturer == "Unknown":
             device = self._resolve_manufacturer(device)
+        device = self._resolve_device_family(device)
 
         plugin = self._find_plugin_for_manufacturer(device.manufacturer) or self._plugin_map.get("Generic")
         if plugin:

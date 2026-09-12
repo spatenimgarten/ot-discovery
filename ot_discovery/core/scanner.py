@@ -12,6 +12,7 @@ from ..models.device import Device
 from ..models.scan_result import ScanResult, ScanType
 from ..scanners import ARPScanner, DCPScanner, TCPScanner, UDPScanner
 from ..plugins import PluginManager, create_default_plugin_manager
+from ..plugins.gsdml_database import ensure_gsdml_database_loaded
 from ..plugins.vendor_id_database import ensure_vendor_id_database_loaded
 from ..export import CSVExporter, JSONExporter
 
@@ -183,6 +184,8 @@ class OTScanner:
         loop = asyncio.get_event_loop()
         vendor_id_count = await loop.run_in_executor(None, ensure_vendor_id_database_loaded)
         logger.debug("PI vendor ID database ready: %d entries", vendor_id_count)
+        gsdml_count = await loop.run_in_executor(None, ensure_gsdml_database_loaded)
+        logger.debug("Local GSDML database ready: %d entries", gsdml_count)
 
         for i, device in enumerate(devices):
             if self.config.progress_callback:
