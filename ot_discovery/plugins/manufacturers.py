@@ -1,11 +1,15 @@
 """Manufacturer-specific plugins."""
 
+import logging
 from ipaddress import IPv4Address
 from typing import Optional
 
 from ..models.device import Device, DeviceType, Protocol
+from ..scanners.s7comm import S7CommError, read_identity
 from .base import PluginBase, PluginMatchResult
 from .oui_database import lookup_manufacturer, get_all_ouis_for_manufacturer
+
+logger = logging.getLogger("ot_discovery.plugins.manufacturers")
 
 
 class SiemensPlugin(PluginBase):
@@ -40,7 +44,21 @@ class SiemensPlugin(PluginBase):
         return device
 
     def details(self, device: Device) -> Device:
-        device.raw_data.setdefault("siemens", {})
+        if 102 not in device.tcp_ports:
+            return device
+        try:
+            identity = read_identity(device.ip)
+        except (S7CommError, OSError) as e:
+            logger.debug("  S7comm SZL read failed for %s: %s", device.ip, e)
+            return device
+        device.order_number = identity.order_number or device.order_number
+        device.hardware_revision = (
+            str(identity.hardware_revision) if identity.hardware_revision is not None else device.hardware_revision
+        )
+        device.firmware = identity.firmware or device.firmware
+        device.serial_number = identity.serial_number or device.serial_number
+        if identity.module_type:
+            device.raw_data["s7_module_type"] = identity.module_type
         return device
 
 
