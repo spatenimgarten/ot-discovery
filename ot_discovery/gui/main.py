@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,30 @@ from ..version import get_version
 setup_logging(log_file=LOG_DIR / "ot_discovery_gui.log", level=logging.DEBUG, console_level=logging.INFO)
 
 
+class _Tooltip:
+    """Small borderless popup shown next to the cursor, e.g. for a CVE description on hover."""
+
+    def __init__(self, widget: tk.Widget):
+        self.widget = widget
+        self._window: Optional[tk.Toplevel] = None
+
+    def show(self, text: str, x: int, y: int) -> None:
+        self.hide()
+        self._window = tk.Toplevel(self.widget)
+        self._window.wm_overrideredirect(True)
+        self._window.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            self._window, text=text, justify=tk.LEFT, background="#ffffe0",
+            relief=tk.SOLID, borderwidth=1, font=("Segoe UI", 8), wraplength=420,
+        )
+        label.pack(ipadx=4, ipady=2)
+
+    def hide(self) -> None:
+        if self._window is not None:
+            self._window.destroy()
+            self._window = None
+
+
 class OTDiscoveryGUI:
     """Main GUI application."""
 
@@ -46,6 +71,8 @@ class OTDiscoveryGUI:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.devices: list[Device] = []
         self.is_scanning = False
+        self._cve_tooltip: Optional[_Tooltip] = None
+        self._cve_tooltip_item: Optional[str] = None
 
         self._setup_ui()
         self._setup_styles()
@@ -231,7 +258,19 @@ class OTDiscoveryGUI:
             "TCP Ports", "UDP Ports", "Protokolle", "Risiko", "CVEs"
         ]
         self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
+        # Severity coloring uses orange/yellow so it stays visually distinct
+        # from the light-red duplicate-MAC highlight below; duplicate_mac is
+        # applied last (see _add_device_to_tree) so it still wins if both apply,
+        # keeping that existing distinguishing marker unambiguous.
+        self.tree.tag_configure("cve_critical", background="#ff9d4d")
+        self.tree.tag_configure("cve_high", background="#ffc266")
+        self.tree.tag_configure("cve_medium", background="#fff0b3")
         self.tree.tag_configure("duplicate_mac", background="#ffc2c2")
+        self._cve_column_index = columns.index("CVEs") + 1  # Treeview column ids are 1-based ("#1", "#2", ...)
+        self._cve_tooltip = _Tooltip(self.tree)
+        self.tree.bind("<Motion>", self._on_tree_motion)
+        self.tree.bind("<Leave>", self._on_tree_leave)
+        self.tree.bind("<Double-Button-1>", self._on_tree_double_click)
 
         col_widths = {
             "IP": 100, "Hostname": 120, "DCP Name": 120, "Hersteller": 100,
@@ -425,9 +464,90 @@ class OTDiscoveryGUI:
             ", ".join(device.vulnerabilities),
         ]
         tags = [str(device.ip)]
+        severity_tag = self._severity_tag(device)
+        if severity_tag:
+            tags.append(severity_tag)
         if device.duplicate_mac:
             tags.append("duplicate_mac")
         self.tree.insert("", tk.END, values=values, tags=tuple(tags))
+
+    _SEVERITY_TAGS = {"CRITICAL": "cve_critical", "HIGH": "cve_high", "MEDIUM": "cve_medium"}
+
+    def _severity_tag(self, device: Device) -> Optional[str]:
+        """Row highlight tag for the device's most severe applicable CVE, if any."""
+        severities = {c.get("severity") for c in device.raw_data.get("cve_details", [])}
+        for level, tag in self._SEVERITY_TAGS.items():
+            if level in severities:
+                return tag
+        return None
+
+    def _device_for_tree_item(self, item_id: str) -> Optional[Device]:
+        values = self.tree.item(item_id, "values")
+        if not values:
+            return None
+        ip_str = values[0]
+        return next((d for d in self.devices if str(d.ip) == ip_str), None)
+
+    def _on_tree_motion(self, event) -> None:
+        row = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if not row or col != f"#{self._cve_column_index}":
+            self._cve_tooltip.hide()
+            self._cve_tooltip_item = None
+            return
+        if row == self._cve_tooltip_item:
+            return
+        device = self._device_for_tree_item(row)
+        cve_details = device.raw_data.get("cve_details") if device else None
+        if not cve_details:
+            self._cve_tooltip.hide()
+            self._cve_tooltip_item = None
+            return
+        self._cve_tooltip_item = row
+        text = "\n\n".join(
+            f"{c['id']} ({c.get('severity') or '?'}, CVSS {c.get('cvss_score', '?')})\n{c.get('description', '')}"
+            for c in cve_details
+        )
+        self._cve_tooltip.show(text, event.x_root + 14, event.y_root + 10)
+
+    def _on_tree_leave(self, event) -> None:
+        self._cve_tooltip.hide()
+        self._cve_tooltip_item = None
+
+    def _on_tree_double_click(self, event) -> None:
+        row = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if not row or col != f"#{self._cve_column_index}":
+            return
+        device = self._device_for_tree_item(row)
+        cve_details = device.raw_data.get("cve_details") if device else None
+        if not cve_details:
+            return
+        self._show_cve_popup(cve_details)
+
+    def _show_cve_popup(self, cve_details: list[dict]) -> None:
+        """Small window listing each CVE with a clickable link to its NVD page."""
+        popup = tk.Toplevel(self.root)
+        popup.title("CVE Details")
+        popup.geometry("460x" + str(min(500, 60 + 90 * len(cve_details))))
+        canvas = tk.Canvas(popup, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(popup, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for c in cve_details:
+            frame = ttk.Frame(inner)
+            frame.pack(fill=tk.X, padx=10, pady=6)
+            url = c.get("url") or f"https://nvd.nist.gov/vuln/detail/{c['id']}"
+            header = f"{c['id']} ({c.get('severity') or '?'}, CVSS {c.get('cvss_score', '?')})"
+            link = tk.Label(frame, text=header, fg="#0645ad", cursor="hand2", font=("Segoe UI", 9, "underline"))
+            link.pack(anchor=tk.W)
+            link.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+            ttk.Label(frame, text=c.get("description", ""), wraplength=420, justify=tk.LEFT).pack(anchor=tk.W)
 
     def _sort_tree(self, col: str) -> None:
         # Simple sort toggle

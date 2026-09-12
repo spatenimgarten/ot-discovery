@@ -172,6 +172,19 @@ class PluginManager:
             f"{m.cve_id} ({m.severity or '?'}, CVSS {m.cvss_score if m.cvss_score is not None else '?'})"
             for m in matches
         ]
+        # Full detail (description, NVD link) kept separately from the short
+        # display string above - the GUI tree uses it for a hover tooltip and
+        # a click-through link, which the joined string alone can't carry.
+        device.raw_data["cve_details"] = [
+            {
+                "id": m.cve_id,
+                "description": m.description,
+                "severity": m.severity,
+                "cvss_score": m.cvss_score,
+                "url": f"https://nvd.nist.gov/vuln/detail/{m.cve_id}",
+            }
+            for m in matches
+        ]
         scored = [m.cvss_score for m in matches if m.cvss_score is not None]
         if scored:
             device.risk_score = max(scored)
