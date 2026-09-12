@@ -70,66 +70,6 @@ class FestoPlugin(PluginBase):
         return device
 
 
-class PhoenixPlugin(PluginBase):
-    NAME = "Phoenix Contact"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.IO_MODULE
-        device.protocols.append(Protocol.PROFINET)
-        device.protocols.append(Protocol.MODBUS_TCP)
-        return device
-
-
-class WagoPlugin(PluginBase):
-    NAME = "Wago"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.PLC
-        device.protocols.append(Protocol.MODBUS_TCP)
-        device.protocols.append(Protocol.PROFINET)
-        return device
-
-
-class BeckhoffPlugin(PluginBase):
-    NAME = "Beckhoff"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.PLC
-        device.protocols.append(Protocol.ETHERNET_IP)
-        device.protocols.append(Protocol.MODBUS_TCP)
-        return device
-
-
-class MoxaPlugin(PluginBase):
-    NAME = "Moxa"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.SWITCH
-        device.protocols.append(Protocol.SNMP)
-        device.protocols.append(Protocol.MODBUS_TCP)
-        return device
-
-
-class HirschmannPlugin(PluginBase):
-    NAME = "Hirschmann"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.SWITCH
-        device.protocols.append(Protocol.SNMP)
-        device.protocols.append(Protocol.HTTP)
-        return device
-
-
-class AVMPlugin(PluginBase):
-    NAME = "AVM"
-
-    def details(self, device: Device) -> Device:
-        device.device_type = DeviceType.ROUTER
-        device.protocols.append(Protocol.HTTP)
-        device.protocols.append(Protocol.HTTPS)
-        return device
-
-
 class GenericPlugin(PluginBase):
     """Fallback for devices whose manufacturer didn't match a plugin above -
     just tags likely protocols from whichever common ports are open."""
@@ -159,11 +99,5 @@ def create_default_plugin_manager() -> "PluginManager":
     manager.register(SiemensPlugin())
     manager.register(IFMPlugin())
     manager.register(FestoPlugin())
-    manager.register(PhoenixPlugin())
-    manager.register(WagoPlugin())
-    manager.register(BeckhoffPlugin())
-    manager.register(MoxaPlugin())
-    manager.register(HirschmannPlugin())
-    manager.register(AVMPlugin())
     manager.register(GenericPlugin())
     return manager

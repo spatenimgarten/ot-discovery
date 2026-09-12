@@ -11,6 +11,7 @@ import logging
 from typing import Optional
 
 from ..models.device import Device, Protocol
+from ..scanners.nvd_lookup import NvdLookupError, find_applicable_cves
 from ..scanners.pnio_im import PnioImError, read_im0
 from .base import PluginBase
 from .gsdml_database import lookup_model_name
@@ -132,6 +133,52 @@ class PluginManager:
             device.raw_data["gsdml_product_family"] = name
         return device
 
+    def _build_cve_keyword(self, device: Device) -> Optional[str]:
+        """Build an NVD keyword search term from whatever a plugin's details() extracted.
+
+        Only manufacturers with a real plugin (Siemens/Festo/IFM) are worth
+        searching - Generic devices have no identity data specific enough to
+        search NVD with, so a keyword search there would be mostly noise.
+        """
+        manufacturer = (device.manufacturer or "").lower()
+        if "siemens" in manufacturer:
+            module_type = device.raw_data.get("s7_module_type")
+            return f"Siemens SIMATIC {module_type}" if module_type else None
+        if "festo" in manufacturer:
+            return device.raw_data.get("gsdml_product_family")
+        if "ifm" in manufacturer:
+            return f"{device.manufacturer} {device.order_number}" if device.order_number else None
+        return None
+
+    def _lookup_vulnerabilities(self, device: Device) -> Device:
+        """Search NVD for CVEs applicable to this device's identified product/firmware.
+
+        Best-effort: a missing keyword (not enough identity data extracted)
+        or a failed request just leaves device.vulnerabilities empty rather
+        than aborting identification.
+        """
+        keyword = self._build_cve_keyword(device)
+        if not keyword:
+            return device
+        try:
+            matches = find_applicable_cves(keyword, device.firmware)
+        except NvdLookupError as e:
+            logger.debug("  NVD lookup failed for %s (keyword=%r): %s", device.ip, keyword, e)
+            return device
+        if not matches:
+            logger.debug("  No applicable CVEs found for %s (keyword=%r)", device.ip, keyword)
+            return device
+        device.vulnerabilities = [
+            f"{m.cve_id} ({m.severity or '?'}, CVSS {m.cvss_score if m.cvss_score is not None else '?'})"
+            for m in matches
+        ]
+        scored = [m.cvss_score for m in matches if m.cvss_score is not None]
+        if scored:
+            device.risk_score = max(scored)
+        logger.info("  Found %d applicable CVE(s) for %s (keyword=%r): %s",
+                    len(matches), device.ip, keyword, ", ".join(m.cve_id for m in matches))
+        return device
+
     def run_full_identification(self, device: Device) -> Device:
         """Resolve manufacturer, read generic I&M0, then run the matching plugin's details()."""
         logger.info("Starting full identification for %s", device.ip)
@@ -156,6 +203,8 @@ class PluginManager:
                 logger.debug("  Plugin '%s' details() completed", plugin.name)
             except Exception as e:
                 logger.error("  Plugin '%s' details() failed: %s", plugin.name, e)
+
+        device = self._lookup_vulnerabilities(device)
 
         logger.info("Final: %s -> Manufacturer: %s, Type: %s, Firmware: %s",
                     device.ip,

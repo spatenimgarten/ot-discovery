@@ -132,4 +132,7 @@ class Device:
             self.oui = other.oui
         self.mac_locally_administered = self.mac_locally_administered or other.mac_locally_administered
         self.duplicate_mac = self.duplicate_mac or other.duplicate_mac
+        if other.vulnerabilities and not self.vulnerabilities:
+            self.vulnerabilities = other.vulnerabilities
+        self.risk_score = max(self.risk_score, other.risk_score)
         self.raw_data.update(other.raw_data)
