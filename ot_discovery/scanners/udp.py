@@ -66,7 +66,7 @@ class UDPScanner:
 
                     loop = asyncio.get_event_loop()
                     data, _ = await asyncio.wait_for(
-                        loop.sock_recv(sock, 1024),
+                        loop.sock_recvfrom(sock, 1024),
                         timeout=self.timeout
                     )
                     sock.close()
