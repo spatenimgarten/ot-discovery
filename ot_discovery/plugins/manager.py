@@ -4,7 +4,8 @@ import logging
 from typing import Optional
 from ipaddress import IPv4Address
 
-from ..models.device import Device
+from ..models.device import Device, Protocol
+from ..scanners.pnio_im import PnioImError, read_im0
 from .base import PluginBase, PluginMatchResult
 from .oui_database import lookup_manufacturer, OUI_LOOKUP_CONFIDENCE
 
@@ -145,10 +146,39 @@ class PluginManager:
                 logger.error("  Plugin '%s' details() failed: %s", plugin.name, e)
         return device
 
+    def _read_generic_im0(self, device: Device) -> Device:
+        """Read PROFINET I&M0 (order number, serial, hardware/firmware revision).
+
+        Vendor-neutral, unlike plugin.details() (e.g. Siemens' S7comm/SZL
+        reader) - only attempted for devices that already answered DCP, since
+        I&M0 is a PROFINET-specific read that non-PROFINET devices won't have
+        a listener for at all.
+        """
+        if Protocol.PROFINET not in device.protocols:
+            return device
+        try:
+            im0 = read_im0(device.ip)
+        except (PnioImError, OSError) as e:
+            logger.debug("  I&M0 read failed for %s: %s", device.ip, e)
+            return device
+        device.vendor_id = device.vendor_id or im0.vendor_id
+        device.order_number = device.order_number or im0.order_id or None
+        device.serial_number = device.serial_number or im0.serial_number or None
+        device.hardware_revision = device.hardware_revision or (
+            str(im0.hardware_revision) if im0.hardware_revision else None
+        )
+        device.firmware = device.firmware or im0.firmware or None
+        device.raw_data.setdefault("im0_profile_id", im0.profile_id)
+        device.raw_data.setdefault("im0_version", im0.im_version)
+        logger.info("  I&M0 read for %s: order=%s serial=%s hw_rev=%s firmware=%s",
+                    device.ip, im0.order_id, im0.serial_number, im0.hardware_revision, im0.firmware)
+        return device
+
     def run_full_identification(self, device: Device) -> Device:
-        """Run complete plugin pipeline: match -> identify -> details."""
+        """Run complete plugin pipeline: match -> identify -> generic I&M0 -> vendor details."""
         logger.info("Starting full identification for %s", device.ip)
         device = self.identify_device(device)
+        device = self._read_generic_im0(device)
         device = self.get_details(device)
         logger.info("Final: %s -> Manufacturer: %s, Type: %s, Firmware: %s",
                     device.ip,
