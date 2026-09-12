@@ -12,6 +12,7 @@ from ..models.device import Device
 from ..models.scan_result import ScanResult, ScanType
 from ..scanners import ARPScanner, DCPScanner, TCPScanner, UDPScanner
 from ..plugins import PluginManager, create_default_plugin_manager
+from ..plugins.vendor_id_database import ensure_vendor_id_database_loaded
 from ..export import CSVExporter, JSONExporter
 
 
@@ -176,6 +177,13 @@ class OTScanner:
 
     async def _run_plugins(self, devices: list[Device]) -> None:
         """Run plugin identification."""
+        # Loads (and downloads if missing) the PI vendor ID database up front,
+        # so a first-time fetch doesn't block the event loop mid-identification
+        # when the first unmatched device triggers a lazy lookup.
+        loop = asyncio.get_event_loop()
+        vendor_id_count = await loop.run_in_executor(None, ensure_vendor_id_database_loaded)
+        logger.debug("PI vendor ID database ready: %d entries", vendor_id_count)
+
         for i, device in enumerate(devices):
             if self.config.progress_callback:
                 await self.config.progress_callback(i + 1, len(devices), "Plugin Identification")

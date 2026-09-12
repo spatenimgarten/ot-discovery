@@ -8,6 +8,7 @@ from ..models.device import Device, Protocol
 from ..scanners.pnio_im import PnioImError, read_im0
 from .base import PluginBase, PluginMatchResult
 from .oui_database import lookup_manufacturer, OUI_LOOKUP_CONFIDENCE
+from .vendor_id_database import lookup_vendor_name, VENDOR_ID_LOOKUP_CONFIDENCE
 
 
 logger = logging.getLogger("ot_discovery.plugins.manager")
@@ -116,16 +117,26 @@ class PluginManager:
                 except Exception as e:
                     logger.error("  Plugin '%s' identify() failed: %s", plugin.name, e)
 
-        # No dedicated plugin covers every OUI in the database (e.g. ABB, Rockwell,
-        # Espressif). Fall back to the raw OUI lookup whenever no plugin gave a
-        # real manufacturer.
+        # No dedicated plugin covers every vendor in the database (e.g. ABB,
+        # Rockwell, Espressif). Fall back to the PI vendor_id registry first
+        # when a DCP/I&M vendor_id is known - it's reported by the device
+        # itself, more authoritative than the OUI (which only identifies the
+        # NIC/chipset maker and can differ from the actual product vendor) -
+        # then to the raw OUI lookup if that's not available either.
         if not device.manufacturer or device.manufacturer == "Unknown":
-            oui_mfr = lookup_manufacturer(device.mac) if device.mac else None
-            if oui_mfr:
-                logger.info("  Manufacturer set to %s via OUI database fallback", oui_mfr)
-                device.manufacturer = oui_mfr
-                device.manufacturer_confidence = OUI_LOOKUP_CONFIDENCE
-                device.manufacturer_source = "OUI"
+            vendor_mfr = lookup_vendor_name(device.vendor_id)
+            if vendor_mfr:
+                logger.info("  Manufacturer set to %s via PI vendor_id database fallback", vendor_mfr)
+                device.manufacturer = vendor_mfr
+                device.manufacturer_confidence = VENDOR_ID_LOOKUP_CONFIDENCE
+                device.manufacturer_source = "PI Vendor ID"
+            else:
+                oui_mfr = lookup_manufacturer(device.mac) if device.mac else None
+                if oui_mfr:
+                    logger.info("  Manufacturer set to %s via OUI database fallback", oui_mfr)
+                    device.manufacturer = oui_mfr
+                    device.manufacturer_confidence = OUI_LOOKUP_CONFIDENCE
+                    device.manufacturer_source = "OUI"
 
         return device
 
