@@ -12,6 +12,7 @@ from ..models.device import Device
 from ..models.scan_result import ScanResult, ScanType
 from ..scanners import ARPScanner, DCPScanner, TCPScanner, UDPScanner
 from ..scanners.tcp import DEEP_PORTS, FAST_PORTS
+from ..scanners.udp import DEEP_PORTS as UDP_DEEP_PORTS, FAST_PORTS as UDP_FAST_PORTS
 from ..plugins import PluginManager, create_default_plugin_manager
 from ..plugins.gsdml_database import ensure_gsdml_database_loaded
 from ..plugins.vendor_id_database import ensure_vendor_id_database_loaded
@@ -172,9 +173,12 @@ class OTScanner:
 
     async def _run_udp(self, devices: list[Device]) -> None:
         """Run UDP port scan."""
-        logger.info("Starting UDP scan on %d devices...", len(devices))
+        ports = self.config.udp_ports
+        if ports is None:
+            ports = UDP_FAST_PORTS if self.config.mode == ScanMode.FAST else UDP_DEEP_PORTS
+        logger.info("Starting UDP scan on %d devices (%d ports)...", len(devices), len(ports))
         scanner = UDPScanner(
-            ports=self.config.udp_ports,
+            ports=ports,
             timeout=self.config.udp_timeout,
             concurrency=self.config.udp_concurrency,
             progress_callback=self._make_progress("UDP Scan"),

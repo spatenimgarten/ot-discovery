@@ -10,6 +10,18 @@ from ..models.scan_result import ScanResult, ScanType
 
 COMMON_OT_UDP_PORTS = [161, 34962, 34963, 34964, 44818, 48898, 1089, 1090]
 
+# "fast": just the OT/industrial list above - a quick check for known
+# protocols, same philosophy as tcp.py's FAST_PORTS.
+FAST_PORTS = COMMON_OT_UDP_PORTS
+
+# "deep": the OT list plus common network-service ports worth knowing about
+# on an OT network (DNS/DHCP/TFTP/NTP - firmware/config delivery -, SNMP
+# traps, BACnet). Deliberately not a 1-1024 sweep the way tcp.py's DEEP_PORTS
+# is - UDP has no RST equivalent, so a closed/filtered port is only ever
+# detected by timeout, making a broad UDP sweep far slower per port than the
+# TCP equivalent for comparatively little OT-relevant benefit.
+DEEP_PORTS = COMMON_OT_UDP_PORTS + [53, 67, 68, 69, 123, 137, 162, 500, 1900, 47808]
+
 
 class UDPScanner:
     """UDP port scanner."""
