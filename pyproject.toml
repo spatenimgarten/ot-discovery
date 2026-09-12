@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ot-discovery"
+version = "0.1.0"
+description = "OT Discovery - Asset Management Tool for Automation Networks"
+readme = "README.md"
+authors = [{name = "OT Discovery Team"}]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Networking :: Monitoring",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "netifaces>=0.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pyinstaller>=6.0.0",
+]
+fast-arp = [
+    "scapy>=2.5.0",  # Windows: enables a fast Npcap broadcast ARP sweep; falls back to SendARP if absent
+]
+
+[project.scripts]
+ot-discovery = "ot_discovery.cli:run"
+ot-discovery-gui = "ot_discovery.gui.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ot_discovery*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

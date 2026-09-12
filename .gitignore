@@ -1,0 +1,21 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Packaging artifacts
+*.egg-info/
+build/
+dist/
+
+# Runtime data (auto-downloaded/regenerated, see ot_discovery/paths.py)
+data/
+logs/
+*.log
+
+# PyInstaller output
+*.spec.bak
+
+# Editor/OS
+.vscode/
+.idea/
+Thumbs.db
