@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import subprocess
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
@@ -11,6 +14,20 @@ block_cipher = None
 # redistribution anyway. The app points users at npcap.com if it's missing
 # (see ot_discovery/npcap_util.py), keeping this build small.
 datas = []
+
+# Stamp the exe with the git commit it was built from (see
+# ot_discovery/version.py, which reads this back at runtime since the
+# frozen exe can't call git itself).
+try:
+    _git_hash = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=SPECPATH, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+except (OSError, subprocess.SubprocessError):
+    _git_hash = "unknown"
+_version_file = Path(SPECPATH) / "_version.txt"
+_version_file.write_text(_git_hash, encoding="utf-8")
+datas.append((str(_version_file), "."))
 
 # Hidden imports for asyncio and network modules
 hiddenimports = [

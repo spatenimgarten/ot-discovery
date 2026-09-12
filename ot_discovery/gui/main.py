@@ -22,6 +22,7 @@ from ..logging_config import setup_logging
 from ..netutil import parse_network
 from ..npcap_util import is_npcap_installed, NPCAP_DOWNLOAD_URL
 from ..paths import LOG_DIR
+from ..version import get_version
 
 
 # Setup logging for GUI
@@ -33,7 +34,7 @@ class OTDiscoveryGUI:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("OT Discovery - Asset Management v0.0.1")
+        self.root.title(f"OT Discovery - Asset Management ({get_version()})")
         self.root.geometry("1200x700")
         self.root.minsize(900, 600)
         # Start maximized/fullscreen
